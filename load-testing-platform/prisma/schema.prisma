@@ -1,0 +1,324 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum SubscriptionTier {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+enum TestJobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum NodeStatus {
+  ACTIVE
+  INACTIVE
+  MAINTENANCE
+  ERROR
+}
+
+enum HttpMethod {
+  GET
+  POST
+  PUT
+  PATCH
+  DELETE
+  HEAD
+  OPTIONS
+}
+
+model User {
+  id              String            @id @default(uuid())
+  email           String            @unique
+  passwordHash    String
+  mfaSecret       String?
+  role            UserRole          @default(USER)
+  subscription    SubscriptionTier  @default(FREE)
+  testsUsed       Int               @default(0)
+  dailyTestLimit  Int               @default(10)
+  apiKey          String?           @unique
+  lastLogin       DateTime?
+  isActive        Boolean           @default(true)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  // Profile information
+  firstName       String?
+  lastName        String?
+  company         String?
+  department      String?
+  
+  // Billing & Credits
+  credits         Int               @default(0)
+  billingEmail    String?
+  
+  // Security settings
+  ipWhitelist     String[]
+  sessionTimeout  Int               @default(3600)
+  maxConcurrentSessions Int         @default(5)
+  
+  // Relations
+  loadTestJobs    LoadTestJob[]
+  loadScripts     LoadScript[]
+  organizations   OrganizationUser[]
+  
+  @@map("users")
+}
+
+model Organization {
+  id              String            @id @default(uuid())
+  name            String
+  domain          String?
+  isActive        Boolean           @default(true)
+  subscriptionTier SubscriptionTier @default(FREE)
+  maxUsers        Int               @default(5)
+  maxConcurrentTests Int            @default(1)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  // Billing
+  billingPlan     String?
+  billingCycle    String            @default("monthly")
+  nextBillingDate DateTime?
+  
+  // Settings
+  allowedDomains  String[]
+  ipWhitelist     String[]
+  
+  // Relations
+  users           OrganizationUser[]
+  loadTestJobs    LoadTestJob[]
+  
+  @@map("organizations")
+}
+
+model OrganizationUser {
+  id             String       @id @default(uuid())
+  userId         String
+  organizationId String
+  role           String       @default("member")
+  joinedAt       DateTime     @default(now())
+  
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, organizationId])
+  @@map("organization_users")
+}
+
+model LoadTestJob {
+  id              String        @id @default(uuid())
+  userId          String
+  organizationId  String?
+  nodeId          String?
+  name            String
+  targetUrl       String
+  method          HttpMethod    @default(GET)
+  headers         Json?
+  body            String?
+  concurrency     Int           @default(1)
+  duration        Int           // Duration in seconds
+  rampUpTime      Int           @default(0)
+  scriptId        String?
+  status          TestJobStatus @default(PENDING)
+  startedAt       DateTime?
+  completedAt     DateTime?
+  totalRequests   Int           @default(0)
+  successfulRequests Int        @default(0)
+  failedRequests  Int           @default(0)
+  averageLatency  Float?
+  maxLatency      Float?
+  minLatency      Float?
+  tps             Float?        // Transactions per second
+  errorRate       Float?
+  results         Json?         // Detailed test results
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  
+  // Advanced options
+  followRedirects Boolean       @default(true)
+  timeout         Int           @default(30000)
+  userAgent       String?
+  cookies         Json?
+  proxy           String?
+  
+  // Relations
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization    Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  node            TestNode?     @relation(fields: [nodeId], references: [id], onDelete: SetNull)
+  script          LoadScript?   @relation(fields: [scriptId], references: [id], onDelete: SetNull)
+  metrics         TestMetric[]
+  
+  @@map("load_test_jobs")
+}
+
+model TestNode {
+  id              String      @id @default(uuid())
+  name            String
+  location        String
+  ipAddress       String
+  port            Int         @default(80)
+  maxConcurrent   Int         @default(100)
+  currentLoad     Int         @default(0)
+  status          NodeStatus  @default(ACTIVE)
+  capabilities    Json?       // Node-specific capabilities
+  lastHeartbeat   DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Performance metrics
+  cpuUsage        Float?
+  memoryUsage     Float?
+  networkLatency  Float?
+  
+  // Configuration
+  region          String?
+  datacenter      String?
+  provider        String?     // AWS, Azure, GCP
+  instanceType    String?
+  
+  // Relations
+  loadTestJobs    LoadTestJob[]
+  nodeMetrics     NodeMetric[]
+  
+  @@map("test_nodes")
+}
+
+model LoadScript {
+  id              String      @id @default(uuid())
+  userId          String
+  name            String
+  description     String?
+  jsCode          String      // JavaScript code for the test
+  version         String      @default("1.0.0")
+  isPublic        Boolean     @default(false)
+  category        String?
+  tags            String[]
+  language        String      @default("javascript")
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Metadata
+  author          String?
+  documentation   String?
+  examples        Json?
+  
+  // Relations
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  loadTestJobs    LoadTestJob[]
+  
+  @@map("load_scripts")
+}
+
+model RealTimeMetrics {
+  id              String      @id @default(uuid())
+  timestamp       DateTime    @default(now())
+  activeTests     Int         @default(0)
+  systemLoad      Float?
+  totalUsers      Int         @default(0)
+  nodeMetrics     Json?       // Aggregated node metrics
+  
+  // System-wide metrics
+  totalRequests   BigInt      @default(0)
+  requestsPerSecond Float?
+  errorRate       Float?
+  averageLatency  Float?
+  
+  @@map("realtime_metrics")
+}
+
+model TestMetric {
+  id              String      @id @default(uuid())
+  loadTestJobId   String
+  timestamp       DateTime    @default(now())
+  requestCount    Int         @default(0)
+  errorCount      Int         @default(0)
+  latency         Float?
+  responseSize    Int?
+  statusCode      Int?
+  errorMessage    String?
+  
+  loadTestJob     LoadTestJob @relation(fields: [loadTestJobId], references: [id], onDelete: Cascade)
+  
+  @@map("test_metrics")
+}
+
+model NodeMetric {
+  id              String      @id @default(uuid())
+  nodeId          String
+  timestamp       DateTime    @default(now())
+  cpuUsage        Float?
+  memoryUsage     Float?
+  diskUsage       Float?
+  networkIn       BigInt?
+  networkOut      BigInt?
+  activeConnections Int?
+  
+  node            TestNode    @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  
+  @@map("node_metrics")
+}
+
+model ApiKey {
+  id              String      @id @default(uuid())
+  userId          String
+  name            String
+  key             String      @unique
+  lastUsed        DateTime?
+  expiresAt       DateTime?
+  isActive        Boolean     @default(true)
+  permissions     String[]    // List of permissions
+  rateLimit       Int?        // Requests per hour
+  createdAt       DateTime    @default(now())
+  
+  @@map("api_keys")
+}
+
+model AuditLog {
+  id              String      @id @default(uuid())
+  userId          String?
+  action          String
+  resource        String?
+  resourceId      String?
+  details         Json?
+  ipAddress       String?
+  userAgent       String?
+  timestamp       DateTime    @default(now())
+  
+  @@map("audit_logs")
+}
+
+model SystemSetting {
+  id              String      @id @default(uuid())
+  key             String      @unique
+  value           String
+  description     String?
+  category        String?
+  isPublic        Boolean     @default(false)
+  updatedAt       DateTime    @updatedAt
+  
+  @@map("system_settings")
+}
